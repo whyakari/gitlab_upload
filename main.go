@@ -16,9 +16,9 @@ var (
 	projectID   = "ruri%2Fayaka-releases"
 )
 
-// Estrutura para ler a resposta da API do GitLab
-type GitLabPackageFile struct {
-	FileName string `json:"file_name"`
+type zipInfo struct {
+	path string
+	ts   int64
 }
 
 func fileAlreadyExists(tagName, fileName string) (bool, error) {
@@ -35,10 +35,6 @@ func fileAlreadyExists(tagName, fileName string) (bool, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return false, nil
-	}
-
 	var packages []struct {
 		ID int `json:"id"`
 	}
@@ -48,19 +44,16 @@ func fileAlreadyExists(tagName, fileName string) (bool, error) {
 		return false, nil
 	}
 
-	filesUrl := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/packages/%d/package_files", 
-		projectID, packages[0].ID)
-	
+	filesUrl := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/packages/%d/package_files", projectID, packages[0].ID)
 	reqFile, _ := http.NewRequest("GET", filesUrl, nil)
 	reqFile.Header.Set("PRIVATE-TOKEN", gitlabToken)
 	
-	respFile, err := client.Do(reqFile)
-	if err != nil {
-		return false, err
-	}
+	respFile, _ := client.Do(reqFile)
 	defer respFile.Body.Close()
 
-	var files []GitLabPackageFile
+	var files []struct {
+		FileName string `json:"file_name"`
+	}
 	json.NewDecoder(respFile.Body).Decode(&files)
 
 	for _, f := range files {
@@ -68,63 +61,7 @@ func fileAlreadyExists(tagName, fileName string) (bool, error) {
 			return true, nil
 		}
 	}
-
 	return false, nil
-}
-
-func gitlabUpload(filePath string) error {
-	fileName := filepath.Base(filePath)
-	tagName := time.Now().Format("20060102")
-
-	exists, err := fileAlreadyExists(tagName, fileName)
-	if err != nil {
-		fmt.Printf("! Erro ao verificar existência: %v\n", err)
-	}
-	if exists {
-		fmt.Printf("⏭ Skipped: %s already exists on GitLab for version %s\n", fileName, tagName)
-		
-		if strings.HasSuffix(fileName, ".zip") {
-			directURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/packages/generic/builds/%s/%s", 
-				projectID, tagName, fileName)
-			fmt.Printf("OTA_URL_RESULT: %s\n", directURL)
-		}
-		return nil
-	}
-
-	file, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	uploadURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/packages/generic/builds/%s/%s", 
-		projectID, tagName, fileName)
-	
-	directURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/packages/generic/builds/%s/%s", 
-		projectID, tagName, fileName)
-
-	req, err := http.NewRequest("PUT", uploadURL, file)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("PRIVATE-TOKEN", gitlabToken)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
-		fmt.Printf("\n✓ Success: %s\n", fileName)
-		if strings.HasSuffix(fileName, ".zip") {
-			fmt.Printf("OTA_URL_RESULT: %s\n", directURL)
-		}
-		return nil
-	}
-
-	return fmt.Errorf("failed: %s", resp.Status)
 }
 
 func main() {
@@ -139,49 +76,82 @@ func main() {
 	zipPattern := filepath.Join(baseDir, "*.zip")
 	zipFiles, _ := filepath.Glob(zipPattern)
 	
-	var latestZip string
-	var zips []string
+	var parsed []zipInfo
 	for _, z := range zipFiles {
-		if !strings.HasSuffix(strings.ToLower(z), "-ota.zip") {
-			zips = append(zips, z)
+		base := filepath.Base(z)
+		if strings.HasSuffix(strings.ToLower(base), "-ota.zip") {
+			continue
 		}
+
+		parts := strings.Split(base, "-")
+		if len(parts) < 3 {
+			continue
+		}
+
+		datePart := parts[len(parts)-2]
+		timePart := strings.TrimSuffix(parts[len(parts)-1], ".zip")
+
+		tsStr := datePart + timePart
+		var ts int64
+		fmt.Sscanf(tsStr, "%d", &ts)
+
+		parsed = append(parsed, zipInfo{path: z, ts: ts})
 	}
 
-	if len(zips) > 0 {
-		sort.Slice(zips, func(i, j int) bool {
-			fi, _ := os.Stat(zips[i])
-			fj, _ := os.Stat(zips[j])
-			return fi.ModTime().After(fj.ModTime())
-		})
-		latestZip = zips[0]
-	}
-
-	if latestZip == "" {
-		fmt.Println("No ZIP found.")
+	if len(parsed) == 0 {
+		fmt.Println("❌ No valid ZIP found.")
 		os.Exit(1)
 	}
 
-	tagName := time.Now().Format("20060102")
-	zipExists, _ := fileAlreadyExists(tagName, filepath.Base(latestZip))
+	sort.Slice(parsed, func(i, j int) bool {
+		return parsed[i].ts > parsed[j].ts
+	})
 
-	if zipExists {
-		fmt.Printf("⏭ ROM %s already exists. Skipping ZIP and all additional images (boot, vendor, etc).\n", filepath.Base(latestZip))
-		url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/packages/generic/builds/%s/%s", 
-			projectID, tagName, filepath.Base(latestZip))
-		fmt.Printf("OTA_URL_RESULT: %s\n", url)
+	latestZip := parsed[0].path
+	zipName := filepath.Base(latestZip)
+	tagName := time.Now().Format("20060102")
+
+	fmt.Printf("📦 Target ZIP: %s (TS: %d)\n", zipName, parsed[0].ts)
+
+	exists, _ := fileAlreadyExists(tagName, zipName)
+	if exists {
+		fmt.Printf("⏭ Build %s already exists on GitLab. Skipping upload.\n", zipName)
+		fmt.Printf("OTA_URL_RESULT: https://gitlab.com/api/v4/projects/%s/packages/generic/builds/%s/%s\n", 
+			projectID, tagName, zipName)
 		os.Exit(0)
 	}
 
-	uploadList := []string{latestZip}
-	others := []string{"boot.img", "dtbo.img", "vendor_boot.img", "vendor_dlkm.img"}
-	for _, img := range others {
-		path := filepath.Join(baseDir, img)
-		if _, err := os.Stat(path); err == nil {
-			uploadList = append(uploadList, path)
+	filesToUpload := []string{latestZip}
+	imgs := []string{"boot.img", "dtbo.img", "vendor_boot.img", "vendor_dlkm.img"}
+	for _, img := range imgs {
+		p := filepath.Join(baseDir, img)
+		if _, err := os.Stat(p); err == nil {
+			filesToUpload = append(filesToUpload, p)
 		}
 	}
 
-	for _, f := range uploadList {
-		gitlabUpload(f)
+	client := &http.Client{}
+	for _, f := range filesToUpload {
+		currName := filepath.Base(f)
+		fmt.Printf("📤 Uploading: %s...\n", currName)
+		
+		file, _ := os.Open(f)
+		uploadURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/packages/generic/builds/%s/%s", 
+			projectID, tagName, currName)
+
+		req, _ := http.NewRequest("PUT", uploadURL, file)
+		req.Header.Set("PRIVATE-TOKEN", gitlabToken)
+
+		resp, err := client.Do(req)
+		if err == nil && (resp.StatusCode == 201 || resp.StatusCode == 200) {
+			fmt.Printf("✅ %s uploaded.\n", currName)
+			if strings.HasSuffix(currName, ".zip") {
+				fmt.Printf("OTA_URL_RESULT: %s\n", uploadURL)
+			}
+			resp.Body.Close()
+		} else {
+			fmt.Printf("❌ Failed to upload %s\n", currName)
+		}
+		file.Close()
 	}
 }
