@@ -17,39 +17,44 @@ var (
 )
 
 func gitlabUpload(filePath string) error {
-        file, err := os.Open(filePath)
-        if err != nil {
-                return err
-        }
-        defer file.Close()
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 
-        fileName := filepath.Base(filePath)
-        tagName := time.Now().Format("20060102")
+	fileName := filepath.Base(filePath)
+	tagName := time.Now().Format("20060102")
 
-        url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/packages/generic/builds/%s/%s",
-                projectID, tagName, fileName)
+	uploadURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/packages/generic/builds/%s/%s", 
+		projectID, tagName, fileName)
 
-        req, err := http.NewRequest("PUT", url, file)
-        if err != nil {
-                return err
-        }
+	displayURL := fmt.Sprintf("https://gitlab.com/ruri/ayaka-releases/-/package_files/latest/download?filename=%s", fileName)
 
-        req.Header.Set("PRIVATE-TOKEN", gitlabToken)
+	directURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/ruri%%2Fayaka-releases/packages/generic/builds/%s/%s", tagName, fileName)
 
-        client := &http.Client{}
-        resp, err := client.Do(req)
-        if err != nil {
-                return err
-        }
-        defer resp.Body.Close()
+	req, err := http.NewRequest("PUT", uploadURL, file)
+	if err != nil {
+		return err
+	}
 
-        if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-                body, _ := io.ReadAll(resp.Body)
-                return fmt.Errorf("Upload failed: %s - %s", resp.Status, string(body))
-        }
+	req.Header.Set("PRIVATE-TOKEN", gitlabToken)
 
-        fmt.Printf("✓ Success: %s sent!\n", fileName)
-        return nil
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
+		fmt.Printf("\n✓ Success: %s\n", fileName)
+		fmt.Printf("🔗 URL: %s\n", directURL)
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("Error: %s - %s", resp.Status, string(body))
 }
 
 func main() {
