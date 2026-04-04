@@ -121,6 +121,7 @@ func main() {
 		os.Exit(0)
 	}
 
+	filesToUpload := []string{latestZip}
 	client := &http.Client{}
 	for _, f := range filesToUpload {
 		currName := filepath.Base(f)
