@@ -121,15 +121,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	filesToUpload := []string{latestZip}
-	imgs := []string{"boot.img", "dtbo.img", "vendor_boot.img", "vendor_dlkm.img"}
-	for _, img := range imgs {
-		p := filepath.Join(baseDir, img)
-		if _, err := os.Stat(p); err == nil {
-			filesToUpload = append(filesToUpload, p)
-		}
-	}
-
 	client := &http.Client{}
 	for _, f := range filesToUpload {
 		currName := filepath.Base(f)
