@@ -9,16 +9,32 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"log"
+	"github.com/joho/godotenv"
 )
 
 var (
-	gitlabToken = os.Getenv("GITLAB_TOKEN")
-	projectID   = "ruri%2Fayaka-releases"
+	gitlabToken string
+	projectID   string
 )
 
 type zipInfo struct {
 	path string
 	ts   int64
+}
+
+func init() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error on load .env")
+	}
+
+	gitlabToken = os.Getenv("GITLAB_TOKEN")
+	projectID = os.Getenv("PROJECTID_GITLAB")
+
+	if gitlabToken == "" || projectID == "" {
+		log.Fatal("GITLAB_TOKEN or PROJECTID_GITLAB not defined in .env")
+	}
 }
 
 func fileAlreadyExists(tagName, fileName string) (bool, error) {
