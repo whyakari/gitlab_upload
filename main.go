@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 	"log"
-	"github.com/joho/godotenv"
+	// "github.com/joho/godotenv"
 )
 
 var (
@@ -24,10 +24,6 @@ type zipInfo struct {
 }
 
 func init() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error on load .env")
-	}
 
 	gitlabToken = os.Getenv("GITLAB_TOKEN")
 	projectID = os.Getenv("PROJECTID_GITLAB")
